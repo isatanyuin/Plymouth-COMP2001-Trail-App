@@ -1,11 +1,4 @@
-latest
-=======
-
-
-
-sql scripts
-tables
-======
+-- tables
 CREATE TABLE CW2.Profile(
 User_ID INTEGER IDENTITY(1,1) NOT NULL,
 Username VARCHAR(50) NOT NULL,
@@ -74,21 +67,17 @@ CREATE TABLE CW2.Saved_Trails(
 );
  
 
-DROP TABLE CW2.FAVOURITE_ACTIVITY
-DROP TABLE CW2.SAVED_TRAILS
-DROP TABLE CW2.PROFILE
+-- CRUD scripts
+-- 1. Create user with only username
+-- 2. Read user data(review statistics and saved trail) 
+-- 3. Update user preference 
+-- 4. Update all user data
+-- 5. Add user favourite activity(preference)
+-- 6. Delete all user data 
 
 
-CRUD scripts
-=============
-1. Create user with only username 
-2. Read user data(review statistics and saved trail) 
-3. Update profile information(username and preferences) 
-4. Delete all user data 
-
-
-1.Create user with only username(others field can be optional)
-=====================================================================
+-- 1.Create user with only username(others field can be optional)
+-- =====================================================================
 CREATE PROCEDURE CW2.Create_User
 @Username VARCHAR(50),
 @Email VARCHAR (75) = NULL,
@@ -143,13 +132,36 @@ EXEC CW2.Create_User
 
 
 EXEC CW2.Create_User
-@Username="YO",
-@Email="HI@gmail.com",
+@Username="Jason",
+@Email="Jason@gmail.com",
 @Phone_Number="+6666"
 
 
-2. Read profile to review statistic(activity) based on user id
-================================================================
+-- 2. Read profile to review statistic(activity) based on user id
+-- ================================================================
+-- View: User Profile Summary
+CREATE OR ALTER VIEW CW2.vw_User_Profile_Summary AS
+SELECT 
+    p.User_ID,
+    p.Username,
+    p.Email,
+    p.Phone_Number,
+    p.Location,
+    p.Date_Of_Birth,
+    p.Created_At,
+    p.Is_Active,
+    COUNT(DISTINCT fa.Activity_ID) AS Total_Favourite_Activities,
+    COUNT(DISTINCT st.Trail_ID) AS Total_Saved_Trails,
+    STRING_AGG(a.Activity_Name, ', ') AS Favourite_Activities
+FROM 
+    CW2.Profile p
+    LEFT JOIN CW2.Favourite_Activity fa ON p.User_ID = fa.User_ID
+    LEFT JOIN CW2.Activity a ON fa.Activity_ID = a.Activity_ID
+    LEFT JOIN CW2.Saved_Trails st ON p.User_ID = st.User_ID
+GROUP BY 
+    p.User_ID, p.Username, p.Email, p.Phone_Number, 
+    p.Location, p.Date_Of_Birth, p.Created_At, p.Is_Active;
+
 CREATE OR ALTER PROCEDURE CW2.Read_User
     @User_ID INTEGER
 AS
@@ -173,8 +185,8 @@ EXEC CW2.Read_User
 @User_ID = 1
 
 
-3. Update user preferences(user)
-=====================================
+-- 3. Update user preferences(user)
+-- =====================================
 CREATE OR ALTER PROCEDURE CW2.Update_User_Activity
     @User_ID INTEGER,
     @Old_Activity_ID INTEGER,
@@ -240,8 +252,8 @@ EXEC CW2.Update_User_Activity
 @Old_Activity_ID=1
 
 
-4. Update all user data(admin) OPTIONAL FIELD
-===================================
+-- 4. Update all user data(admin) OPTIONAL FIELD
+-- ===================================
 CREATE OR ALTER PROCEDURE CW2.Update_User
     @User_ID INTEGER,
     @Username VARCHAR(50) = NULL,
@@ -314,8 +326,8 @@ EXEC CW2.Update_User
     @User_ID = 2,
     @Email = 'john.doe@example.com';
 
-5. add user activity
-=====================
+-- 5. add user activity
+-- =====================
 CREATE OR ALTER PROCEDURE CW2.Add_User_Activity
     @User_ID INT,
     @Activity_ID INT
@@ -376,8 +388,8 @@ EXEC CW2.Add_User_Activity
 @Activity_ID=1
 
 
-6. Delete all user data
-=========================
+-- 6. Delete all user data
+-- =========================
 CREATE OR ALTER PROCEDURE CW2.Delete_User
     @User_ID INTEGER
 AS
@@ -414,8 +426,8 @@ EXEC CW2.Delete_User
 @User_ID=1
 
 
-trigger
-========
+-- trigger
+-- ========
 CREATE OR ALTER TRIGGER CW2.trg_LogNewUser
 ON CW2.Profile
 AFTER INSERT
@@ -431,50 +443,3 @@ BEGIN
         Email
     FROM inserted;
 END;
-
-
-mock data
-=========
-
-INSERT INTO CW2.Profile (Username, Email, Phone_Number, Location, Date_Of_Birth)
-VALUES ('john_doe', 'john.doe@example.com', '+60123456789', 'Kuala Lumpur', '2000-05-15');
-
-
-INSERT INTO CW2.Activity (Activity_ID, Activity_Name)
-VALUES
-(1, 'Running'),
-(2, 'Cycling'),
-(3, 'Hiking');
-
-INSERT INTO CW2.Profile (Username, Email, Phone_Number, Location, Date_Of_Birth)
-VALUES
-('alice', 'alice01@gmail.com', '0123456789', 'Kuala Lumpur', '1998-05-12'),
-('bobby', 'bob88@yahoo.com', '0178889999', 'Penang', '1995-11-03'),
-('hon', NULL, NULL, 'Johor Bahru', NULL)
-
-INSERT INTO CW2.Favourite_Activity (User_ID, Activity_ID)
-VALUES
-(1, 1),	
-(1, 2),
-(2, 1)
-
-INSERT INTO CW2.Favourite_Activity (User_ID, Activity_ID)
-VALUES
-(1, 3)
-
-
-INSERT INTO CW2.Saved_Trails (User_ID, Trail_ID)
-VALUES
-(1, 001),
-(2, 002)
-
-INSERT INTO CW2.Saved_Trails (User_ID, Trail_ID)
-VALUES
-(1, 002)
-
-!!! TEST UER LOG TABLE USING TRIGGER LATER
-
-select * from cw2.profile
-select * from cw2.saved_trails
-select * from cw2.favourite_activity
-

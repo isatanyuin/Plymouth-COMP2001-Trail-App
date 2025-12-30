@@ -231,8 +231,7 @@ def validation_checking(msg):
 # API Endpoints
 
 # create new user
-@app.post(
-    "/api/profiles")
+@app.post("/api/profiles")
 def create_user(user:UserCreate, current_user: dict = Depends(verify_credentials)):
     """
     Create a new user profile in the system.
@@ -272,7 +271,6 @@ def create_user(user:UserCreate, current_user: dict = Depends(verify_credentials
 
 # read user using user id
 @app.get("/api/profiles/{user_id}")
-# def read_user(user_id: int):
 def read_user(user_id: int, current_user: dict = Depends(verify_credentials)):
     """
     Get user profile by ID.
