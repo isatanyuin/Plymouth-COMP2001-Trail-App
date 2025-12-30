@@ -1,0 +1,480 @@
+latest
+=======
+
+
+
+sql scripts
+tables
+======
+CREATE TABLE CW2.Profile(
+User_ID INTEGER IDENTITY(1,1) NOT NULL,
+Username VARCHAR(50) NOT NULL,
+Email VARCHAR(75) NULL,
+Phone_Number VARCHAR (20) NULL,
+Location VARCHAR(100) NULL,
+Date_Of_Birth DATE NULL,
+Created_At DATETIME DEFAULT GETDATE() NOT NULL,
+Updated_At DATETIME DEFAULT GETDATE() NOT NULL,
+Is_Active BIT DEFAULT 1 NOT NULL,
+CONSTRAINT PK_Profile PRIMARY KEY (User_ID),
+CONSTRAINT UQ_Profile_Username UNIQUE (Username),
+    -- Email validation pattern
+    CONSTRAINT CK_Profile_Email CHECK (
+        Email IS NULL OR 
+        Email LIKE '%_@__%.__%'
+    ),
+    -- Phone number validation (basic international format)
+    CONSTRAINT CK_Profile_Phone CHECK (
+        Phone_Number IS NULL OR 
+        Phone_Number LIKE '+%' OR 
+        LEN(Phone_Number) >= 10
+    ),
+    -- Date of birth must be in the past and user must be at least 13 years old
+    CONSTRAINT CK_Profile_DOB CHECK (
+        Date_Of_Birth IS NULL OR 
+        Date_Of_Birth < GETDATE() AND 
+        DATEDIFF(YEAR, Date_Of_Birth, GETDATE()) >= 13
+    )
+);
+
+CREATE TABLE CW2.Activity(
+Activity_ID INTEGER NOT NULL,
+Activity_Name VARCHAR(30) NOT NULL,
+CONSTRAINT PK_Activity PRIMARY KEY (Activity_ID)
+);
+
+CREATE TABLE CW2.Favourite_Activity(
+Favourite_Activity_ID INTEGER IDENTITY(1,1) NOT NULL,
+User_ID INTEGER NOT NULL,
+Activity_ID INTEGER NOT NULL,
+CONSTRAINT PK_Favourite_Activity PRIMARY KEY (Favourite_Activity_ID),
+CONSTRAINT FK_Profile FOREIGN KEY (User_ID) REFERENCES CW2.Profile(User_ID) ON DELETE CASCADE,
+CONSTRAINT FK_Activity FOREIGN KEY (Activity_ID) REFERENCES CW2.Activity(Activity_ID),
+CONSTRAINT UQ_FavActivity_UserActivity UNIQUE (User_ID, Activity_ID) -- prevent duplication fav activity per user
+);
+
+CREATE TABLE CW2.User_Log(
+    Log_ID INTEGER IDENTITY(1,1) NOT NULL,
+    User_ID INTEGER NULL,
+    Username VARCHAR(50) NOT NULL,
+    Action_Type VARCHAR(20) NOT NULL DEFAULT 'INSERT',
+    Email VARCHAR(100) NULL,
+    Created_At DATETIME DEFAULT GETDATE() NOT NULL,
+    CONSTRAINT PK_User_Log PRIMARY KEY (Log_ID)
+);
+
+
+CREATE TABLE CW2.Saved_Trails(
+    User_ID INTEGER NOT NULL,
+    Trail_ID INTEGER NOT NULL,
+    Saved_Date DATETIME DEFAULT GETDATE() NOT NULL,
+    CONSTRAINT PK_Saved_Trails PRIMARY KEY (User_ID, Trail_ID),
+    CONSTRAINT FK_Saved_Trails_Profile FOREIGN KEY (User_ID) REFERENCES CW2.Profile(User_ID) ON DELETE CASCADE,
+    CONSTRAINT UQ_User_Trail UNIQUE (User_ID, Trail_ID) -- prevent duplication saved trail per user
+);
+ 
+
+DROP TABLE CW2.FAVOURITE_ACTIVITY
+DROP TABLE CW2.SAVED_TRAILS
+DROP TABLE CW2.PROFILE
+
+
+CRUD scripts
+=============
+1. Create user with only username 
+2. Read user data(review statistics and saved trail) 
+3. Update profile information(username and preferences) 
+4. Delete all user data 
+
+
+1.Create user with only username(others field can be optional)
+=====================================================================
+CREATE PROCEDURE CW2.Create_User
+@Username VARCHAR(50),
+@Email VARCHAR (75) = NULL,
+@Phone_Number VARCHAR(20) = NULL,
+@Location VARCHAR(100) = NULL,
+@Date_Of_Birth DATE = NULL
+AS
+BEGIN
+SET NOCOUNT ON;
+BEGIN TRY 
+    BEGIN TRANSACTION;
+
+    -- Prevent duplicate username
+    IF EXISTS (
+        SELECT 1
+        FROM CW2.Profile
+        WHERE LOWER(Username) = LOWER(@Username)
+    )
+    BEGIN
+        RAISERROR ('Username already exists.', 16, 1);
+        RETURN;
+    END;
+ 
+    -- Prevent email duplication
+    IF @Email IS NOT NULL AND EXISTS (
+	SELECT 1
+	FROM CW2.PROFILE
+	WHERE LOWER(Email) = LOWER(@Email)
+    )
+    BEGIN 
+	RAISERROR ('Email already exists.', 16,1);
+	RETURN;
+    END;
+
+    INSERT INTO CW2.Profile(Username, Email, Phone_Number, Location, Date_Of_Birth)
+    VALUES (@Username,@Email, @Phone_Number, @Location, @Date_Of_Birth);
+    COMMIT TRANSACTION;
+
+END TRY
+BEGIN CATCH
+    IF @@TRANCOUNT > 0
+	ROLLBACK TRANSACTION;
+    DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+    RAISERROR(@ErrorMessage, 16, 1);
+END CATCH;
+END;
+
+
+
+EXEC CW2.Create_User
+@Username="Jason"
+
+
+EXEC CW2.Create_User
+@Username="YO",
+@Email="HI@gmail.com",
+@Phone_Number="+6666"
+
+
+2. Read profile to review statistic(activity) based on user id
+================================================================
+CREATE OR ALTER PROCEDURE CW2.Read_User
+    @User_ID INTEGER
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    -- Check if user exists
+    IF NOT EXISTS (SELECT 1 FROM CW2.Profile WHERE User_ID = @User_ID)
+    BEGIN
+        RAISERROR('User not found', 16, 1);
+        RETURN;
+    END;
+    
+    -- Return user profile with aggregated data
+    SELECT * FROM CW2.vw_User_Profile_Summary
+    WHERE User_ID = @User_ID;
+END;
+GO
+
+EXEC CW2.Read_User
+@User_ID = 1
+
+
+3. Update user preferences(user)
+=====================================
+CREATE OR ALTER PROCEDURE CW2.Update_User_Activity
+    @User_ID INTEGER,
+    @Old_Activity_ID INTEGER,
+    @New_Activity_ID INTEGER
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        -- Validate user exists
+        IF NOT EXISTS (SELECT 1 FROM CW2.Profile WHERE User_ID = @User_ID)
+        BEGIN
+            RAISERROR('User not found', 16, 1);
+            RETURN;
+        END;
+        
+        -- Validate new activity exists
+        IF NOT EXISTS (SELECT 1 FROM CW2.Activity WHERE Activity_ID = @New_Activity_ID)
+        BEGIN
+            RAISERROR('New Activity not found', 16, 1);
+            RETURN;
+        END;
+        
+        -- Check if user already has this activity
+        IF EXISTS (
+            SELECT 1 FROM CW2.Favourite_Activity
+            WHERE User_ID = @User_ID AND Activity_ID = @New_Activity_ID
+        )
+        BEGIN
+            RAISERROR('Activity already exists for this user', 16, 1);
+            RETURN;
+        END;
+        
+        -- Update the activity
+        UPDATE CW2.Favourite_Activity
+        SET Activity_ID = @New_Activity_ID
+        WHERE User_ID = @User_ID AND Activity_ID = @Old_Activity_ID;
+        
+        -- Check if update affected any rows
+        IF @@ROWCOUNT = 0
+        BEGIN
+            RAISERROR('Old activity not found for this user', 16, 1);
+            RETURN;
+        END;
+        
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrorMessage, 16, 1);
+    END CATCH;
+END;
+
+EXEC CW2.Update_User_Activity
+@User_ID=3,
+@New_Activity_ID=2,
+@Old_Activity_ID=1
+
+
+4. Update all user data(admin) OPTIONAL FIELD
+===================================
+CREATE OR ALTER PROCEDURE CW2.Update_User
+    @User_ID INTEGER,
+    @Username VARCHAR(50) = NULL,
+    @Email VARCHAR(100) = NULL,
+    @Phone_Number VARCHAR(20) = NULL,
+    @Location VARCHAR(100) = NULL,
+    @Date_Of_Birth DATE = NULL
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        -- Check if user exists
+        IF NOT EXISTS (SELECT 1 FROM CW2.Profile WHERE User_ID = @User_ID)
+        BEGIN
+            RAISERROR('User not found', 16, 1);
+            RETURN;
+        END;
+	
+	-- Check for username duplication
+	IF @Username IS NOT NULL AND EXISTS (
+	    SELECT 1 FROM CW2.PROFILE
+   	    WHERE LOWER(Username) = LOWER(@Username) AND User_ID != @User_ID	
+	)
+        BEGIN
+            RAISERROR('Username already exists', 16, 1);
+            RETURN;
+        END;
+
+	-- Check for duplicate email if updating
+        IF @Email IS NOT NULL AND EXISTS (
+            SELECT 1 FROM CW2.Profile 
+            WHERE LOWER(Email) = LOWER(@Email) AND User_ID != @User_ID
+        )
+        BEGIN
+            RAISERROR('Email already exists', 16, 1);
+            RETURN;
+        END;
+                
+        -- Update user profile
+        UPDATE CW2.Profile
+        SET 
+            Username = COALESCE(@Username, Username),
+            Email = COALESCE(@Email, Email),
+            Phone_Number = COALESCE(@Phone_Number, Phone_Number),
+            Location = COALESCE(@Location, Location),
+            Date_Of_Birth = COALESCE(@Date_Of_Birth, Date_Of_Birth),
+            Updated_At = GETDATE()
+        WHERE User_ID = @User_ID;
+        
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrorMessage, 16, 1);
+    END CATCH;
+END;
+
+EXEC CW2.Update_User
+    @User_ID = 1,
+    @Username = 'heyy';
+
+EXEC CW2.Update_User
+    @User_ID = 2,
+    @Email = 'john.doe@example.com';
+
+5. add user activity
+=====================
+CREATE OR ALTER PROCEDURE CW2.Add_User_Activity
+    @User_ID INT,
+    @Activity_ID INT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+
+    BEGIN TRY
+        BEGIN TRANSACTION;
+
+        -- Validate user exists
+        IF NOT EXISTS (
+            SELECT 1 FROM CW2.Profile WHERE User_ID = @User_ID
+        )
+        BEGIN
+            RAISERROR ('User not found', 16, 1);
+            RETURN;
+        END;
+
+        -- Validate activity exists
+        IF NOT EXISTS (
+            SELECT 1 FROM CW2.Activity WHERE Activity_ID = @Activity_ID
+        )
+        BEGIN
+            RAISERROR ('Activity not found', 16, 1);
+            RETURN;
+        END;
+
+        -- Prevent duplicate activity for same user
+        IF EXISTS (
+            SELECT 1
+            FROM CW2.Favourite_Activity
+            WHERE User_ID = @User_ID
+              AND Activity_ID = @Activity_ID
+        )
+        BEGIN
+            RAISERROR ('Activity already exists for this user', 16, 1);
+            RETURN;
+        END;
+
+        INSERT INTO CW2.Favourite_Activity (User_ID, Activity_ID)
+        VALUES (@User_ID, @Activity_ID);
+
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR (@ErrorMessage, 16, 1);
+    END CATCH;
+END;
+
+EXEC CW2.Add_User_Activity
+@User_ID=38,
+@Activity_ID=1
+
+
+6. Delete all user data
+=========================
+CREATE OR ALTER PROCEDURE CW2.Delete_User
+    @User_ID INTEGER
+AS
+BEGIN
+    SET NOCOUNT ON;
+    SET XACT_ABORT ON;
+    
+    BEGIN TRY
+        BEGIN TRANSACTION;
+        
+        -- Check if user exists
+        IF NOT EXISTS (SELECT 1 FROM CW2.Profile WHERE User_ID = @User_ID)
+        BEGIN
+            RAISERROR('User not found', 16, 1);
+            RETURN;
+        END;
+        
+        -- For hard delete, uncomment below:
+        DELETE FROM CW2.Profile WHERE User_ID = @User_ID;
+        
+        COMMIT TRANSACTION;
+    END TRY
+    BEGIN CATCH
+        IF @@TRANCOUNT > 0
+            ROLLBACK TRANSACTION;
+        
+        DECLARE @ErrorMessage NVARCHAR(4000) = ERROR_MESSAGE();
+        RAISERROR(@ErrorMessage, 16, 1);
+    END CATCH;
+END;
+
+
+EXEC CW2.Delete_User
+@User_ID=1
+
+
+trigger
+========
+CREATE OR ALTER TRIGGER CW2.trg_LogNewUser
+ON CW2.Profile
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+    
+    INSERT INTO CW2.User_Log(User_ID, Username, Action_Type, Email)
+    SELECT 
+        User_ID, 
+        Username, 
+        'INSERT',
+        Email
+    FROM inserted;
+END;
+
+
+mock data
+=========
+
+INSERT INTO CW2.Profile (Username, Email, Phone_Number, Location, Date_Of_Birth)
+VALUES ('john_doe', 'john.doe@example.com', '+60123456789', 'Kuala Lumpur', '2000-05-15');
+
+
+INSERT INTO CW2.Activity (Activity_ID, Activity_Name)
+VALUES
+(1, 'Running'),
+(2, 'Cycling'),
+(3, 'Hiking');
+
+INSERT INTO CW2.Profile (Username, Email, Phone_Number, Location, Date_Of_Birth)
+VALUES
+('alice', 'alice01@gmail.com', '0123456789', 'Kuala Lumpur', '1998-05-12'),
+('bobby', 'bob88@yahoo.com', '0178889999', 'Penang', '1995-11-03'),
+('hon', NULL, NULL, 'Johor Bahru', NULL)
+
+INSERT INTO CW2.Favourite_Activity (User_ID, Activity_ID)
+VALUES
+(1, 1),	
+(1, 2),
+(2, 1)
+
+INSERT INTO CW2.Favourite_Activity (User_ID, Activity_ID)
+VALUES
+(1, 3)
+
+
+INSERT INTO CW2.Saved_Trails (User_ID, Trail_ID)
+VALUES
+(1, 001),
+(2, 002)
+
+INSERT INTO CW2.Saved_Trails (User_ID, Trail_ID)
+VALUES
+(1, 002)
+
+!!! TEST UER LOG TABLE USING TRIGGER LATER
+
+select * from cw2.profile
+select * from cw2.saved_trails
+select * from cw2.favourite_activity
+
